@@ -15,7 +15,7 @@
 
 Name:           python-sqlalchemy
 Version:        1.3.2
-Release:        2%{?dist}
+Release:        2%{?dist}.1
 Summary:        Modular and flexible ORM library for python
 
 Group:          Development/Libraries
@@ -28,6 +28,11 @@ Source0:        https://files.pythonhosted.org/packages/source/S/%{srcname}/%{sr
 # Fixed upstream: https://github.com/sqlalchemy/sqlalchemy/commit/25a42e93f4ef5ce1a9f9c23fbcdea3e21a7b3f1a
 # Resolves: https://bugzilla.redhat.com/show_bug.cgi?id=1829932
 Patch0:         fix-regression-in-ambiguous-join-logic.patch
+
+# Include GROUP BY in _should_nest_selectable criteria
+# Upstream issue: https://github.com/sqlalchemy/sqlalchemy/issues/5065
+# Backported from upstream change: https://github.com/sqlalchemy/sqlalchemy/commit/2d5fa22c7d53ff8109d47ba5ae4fe3b9849ddd09
+Patch1:         sqlalchemy-1.4.0-group_by_joined_relations.patch
 
 BuildRequires:  gcc
 
@@ -106,6 +111,7 @@ This package includes the python 3 version of the module.
 %prep
 %setup -n %{srcname}-%{version}
 %patch0 -p1
+%patch1 -p1
 
 %build
 %{?with_python2:%py2_build}
@@ -150,6 +156,10 @@ PYTHONPATH=. %{__python3} -m pytest test
 %endif # with python3
 
 %changelog
+* Mon Dec 04 2023 Lumír Balhar <lbalhar@redhat.com> - 1.3.2-2.1
+- Fix GROUP BY for joined relationships
+Resolves: RHEL-17988
+
 * Fri May 15 2020 Charalampos Stratakis <cstratak@redhat.com> - 1.3.2-2
 - Fix regression in ambiguous join logic
 Resolves: rhbz#1829932

@@ -1,0 +1,142 @@
+From 6d1f6b7dce58bfd112d662486956f919f1640f4f Mon Sep 17 00:00:00 2001
+From: Lumir Balhar <lbalhar@redhat.com>
+Date: Thu, 7 Dec 2023 11:44:37 +0100
+Subject: [PATCH] Include GROUP BY in _should_nest_selectable criteria
+
+Fixed bug where usage of joined eager loading would not properly wrap the
+query inside of a subquery when :meth:`.Query.group_by` were used against
+the query.   When any kind of result-limiting approach is used, such as
+DISTINCT, LIMIT, OFFSET, joined eager loading embeds the row-limited query
+inside of a subquery so that the collection results are not impacted.   For
+some reason, the presence of GROUP BY was never included in this criterion,
+even though it has a similar effect as using DISTINCT.   Additionally, the
+bug would prevent using GROUP BY at all for a joined eager load query for
+most database platforms which forbid non-aggregated, non-grouped columns
+from being in the query, as the additional columns for the joined eager
+load would not be accepted by the database.
+
+Fixes: #5065
+Change-Id: I9a2ed8196f83297ec38012138d1a5acdf9e88155
+(cherry picked from commit 2d5fa22)
+---
+ lib/sqlalchemy/orm/query.py         |  1 +
+ test/orm/test_eager_relations.py    | 40 +++++++++++++++++++++++++++++
+ test/orm/test_subquery_relations.py | 39 ++++++++++++++++++++++++++++
+ 3 files changed, 80 insertions(+)
+
+diff --git a/lib/sqlalchemy/orm/query.py b/lib/sqlalchemy/orm/query.py
+index 9544b7d..321b14d 100644
+--- a/lib/sqlalchemy/orm/query.py
++++ b/lib/sqlalchemy/orm/query.py
+@@ -3479,6 +3479,7 @@ class Query(object):
+             kwargs.get("limit") is not None
+             or kwargs.get("offset") is not None
+             or kwargs.get("distinct", False)
++            or kwargs.get("group_by", False)
+         )
+ 
+     def exists(self):
+diff --git a/test/orm/test_eager_relations.py b/test/orm/test_eager_relations.py
+index 4adf9a7..5a1d4f4 100644
+--- a/test/orm/test_eager_relations.py
++++ b/test/orm/test_eager_relations.py
+@@ -1109,6 +1109,46 @@ class EagerTest(_fixtures.FixtureTest, testing.AssertsCompiledSQL):
+ 
+         self.assert_sql_count(testing.db, go, 1)
+ 
++    def test_group_by_only(self):
++        # like distinct(), a group_by() has a similar effect so the
++        # joined eager load needs to subquery for this as well
++        users, Address, addresses, User = (
++            self.tables.users,
++            self.classes.Address,
++            self.tables.addresses,
++            self.classes.User,
++        )
++
++        mapper(
++            User,
++            users,
++            properties={
++                "addresses": relationship(
++                    mapper(Address, addresses),
++                    lazy="joined",
++                    order_by=addresses.c.email_address,
++                )
++            },
++        )
++
++        q = create_session().query(User)
++        eq_(
++            [
++                User(id=7, addresses=[Address(id=1)]),
++                User(
++                    id=8,
++                    addresses=[
++                        Address(id=3, email_address="ed@bettyboop.com"),
++                        Address(id=4, email_address="ed@lala.com"),
++                        Address(id=2, email_address="ed@wood.com"),
++                    ],
++                ),
++                User(id=9, addresses=[Address(id=5)]),
++                User(id=10, addresses=[]),
++            ],
++            q.order_by(User.id).group_by(User).all(),  # group by all columns
++        )
++
+     def test_limit_2(self):
+         keywords, items, item_keywords, Keyword, Item = (
+             self.tables.keywords,
+diff --git a/test/orm/test_subquery_relations.py b/test/orm/test_subquery_relations.py
+index 117ab5b..ce44061 100644
+--- a/test/orm/test_subquery_relations.py
++++ b/test/orm/test_subquery_relations.py
+@@ -1112,6 +1112,45 @@ class EagerTest(_fixtures.FixtureTest, testing.AssertsCompiledSQL):
+         result = q.order_by(sa.desc(User.id)).limit(2).offset(2).all()
+         eq_(list(reversed(self.static.user_all_result[0:2])), result)
+ 
++    def test_group_by_only(self):
++        # test group_by() not impacting results, similarly to joinedload
++        users, Address, addresses, User = (
++            self.tables.users,
++            self.classes.Address,
++            self.tables.addresses,
++            self.classes.User,
++        )
++
++        mapper(
++            User,
++            users,
++            properties={
++                "addresses": relationship(
++                    mapper(Address, addresses),
++                    lazy="subquery",
++                    order_by=addresses.c.email_address,
++                )
++            },
++        )
++
++        q = create_session().query(User)
++        eq_(
++            [
++                User(id=7, addresses=[Address(id=1)]),
++                User(
++                    id=8,
++                    addresses=[
++                        Address(id=3, email_address="ed@bettyboop.com"),
++                        Address(id=4, email_address="ed@lala.com"),
++                        Address(id=2, email_address="ed@wood.com"),
++                    ],
++                ),
++                User(id=9, addresses=[Address(id=5)]),
++                User(id=10, addresses=[]),
++            ],
++            q.order_by(User.id).group_by(User).all(),  # group by all columns
++        )
++
+     def test_one_to_many_scalar(self):
+         Address, addresses, users, User = (
+             self.classes.Address,
+-- 
+2.43.0
+
